@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CPDMS — Campus Placement Drive Management System</title>
+  <meta name="description" content="Enterprise-style CRUD system for companies, placement drives, students and applications. Built during the SPSU Udaipur Championship.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <p class="eyebrow">SPSU UDAIPUR CHAMPIONSHIP</p>
+        <h1>CPDMS</h1>
+        <p class="brandSub">Campus Placement Drive<br>Management System</p>
+      </div>
+      <nav id="nav">
+        <button class="navBtn active" data-view="dashboard">Dashboard</button>
+        <button class="navBtn" data-view="companies">Companies</button>
+        <button class="navBtn" data-view="drives">Placement Drives</button>
+        <button class="navBtn" data-view="students">Students</button>
+        <button class="navBtn" data-view="applications">Applications</button>
+      </nav>
+      <div class="sidebarFoot">Built by Lakshya Chopra<br>Data persists locally (localStorage)</div>
+    </aside>
+
+    <main class="main">
+      <!-- DASHBOARD -->
+      <section id="view-dashboard" class="view active">
+        <header class="viewHeader">
+          <div>
+            <h2>Dashboard</h2>
+            <p class="viewSub">Live placement summary across the system</p>
+          </div>
+        </header>
+        <div class="statGrid" id="statGrid"></div>
+        <div class="card">
+          <h3>Applications by Status</h3>
+          <div id="statusBars" class="statusBars"></div>
+        </div>
+        <div class="card">
+          <h3>Recent Applications</h3>
+          <div class="tableWrapper"><table>
+            <thead><tr><th>Student</th><th>Drive</th><th>Company</th><th>Status</th><th>Applied</th></tr></thead>
+            <tbody id="recentAppsBody"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- COMPANIES -->
+      <section id="view-companies" class="view">
+        <header class="viewHeader">
+          <div><h2>Companies</h2><p class="viewSub">Organizations participating in placement drives</p></div>
+        </header>
+        <div class="card">
+          <h3 id="companyFormTitle">Add Company</h3>
+          <form id="companyForm">
+            <input type="hidden" id="companyId">
+            <div class="grid3">
+              <div><label>Company Name</label><input type="text" id="companyName" placeholder="e.g. TCS" required></div>
+              <div><label>Industry</label><input type="text" id="companyIndustry" placeholder="e.g. IT Services" required></div>
+              <div><label>Website</label><input type="text" id="companyWebsite" placeholder="e.g. tcs.com"></div>
+            </div>
+            <div class="actions">
+              <button type="submit">Save Company</button>
+              <button type="button" class="secondary" onclick="resetForm('company')">Cancel</button>
+            </div>
+          </form>
+          <p class="msg" id="companyMsg"></p>
+        </div>
+        <div class="card">
+          <div class="tableHeader"><h3>All Companies</h3><span class="count" id="companyCount"></span></div>
+          <div class="tableWrapper"><table>
+            <thead><tr><th>Name</th><th>Industry</th><th>Website</th><th>Open Drives</th><th>Actions</th></tr></thead>
+            <tbody id="companyTableBody"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- DRIVES -->
+      <section id="view-drives" class="view">
+        <header class="viewHeader">
+          <div><h2>Placement Drives</h2><p class="viewSub">Roles, packages, deadlines and eligibility</p></div>
+        </header>
+        <div class="card">
+          <h3 id="driveFormTitle">Add Drive</h3>
+          <form id="driveForm">
+            <input type="hidden" id="driveId">
+            <div class="grid3">
+              <div><label>Company</label><select id="driveCompany" required></select></div>
+              <div><label>Role</label><input type="text" id="driveRole" placeholder="e.g. SDE I" required></div>
+              <div><label>Package (LPA)</label><input type="number" step="0.1" id="drivePackage" placeholder="e.g. 7.5" required></div>
+              <div><label>Minimum CGPA</label><input type="number" step="0.1" min="0" max="10" id="driveMinCgpa" placeholder="e.g. 6.0" required></div>
+              <div><label>Deadline</label><input type="date" id="driveDeadline" required></div>
+            </div>
+            <div class="actions">
+              <button type="submit">Save Drive</button>
+              <button type="button" class="secondary" onclick="resetForm('drive')">Cancel</button>
+            </div>
+          </form>
+          <p class="msg" id="driveMsg"></p>
+        </div>
+        <div class="card">
+          <div class="tableHeader"><h3>All Drives</h3><span class="count" id="driveCount"></span></div>
+          <div class="tableWrapper"><table>
+            <thead><tr><th>Company</th><th>Role</th><th>Package</th><th>Min CGPA</th><th>Deadline</th><th>Applicants</th><th>Actions</th></tr></thead>
+            <tbody id="driveTableBody"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- STUDENTS -->
+      <section id="view-students" class="view">
+        <header class="viewHeader">
+          <div><h2>Students</h2><p class="viewSub">Candidate records and academic profile</p></div>
+        </header>
+        <div class="card">
+          <h3 id="studentFormTitle">Add Student</h3>
+          <form id="studentForm">
+            <input type="hidden" id="studentId">
+            <div class="grid3">
+              <div><label>Name</label><input type="text" id="studentName" placeholder="e.g. Aarav Mehta" required></div>
+              <div><label>Email</label><input type="email" id="studentEmail" placeholder="e.g. aarav@spsu.ac.in" required></div>
+              <div><label>Branch</label><input type="text" id="studentBranch" placeholder="e.g. CSE" required></div>
+              <div><label>CGPA</label><input type="number" step="0.1" min="0" max="10" id="studentCgpa" placeholder="e.g. 8.2" required></div>
+            </div>
+            <div class="actions">
+              <button type="submit">Save Student</button>
+              <button type="button" class="secondary" onclick="resetForm('student')">Cancel</button>
+            </div>
+          </form>
+          <p class="msg" id="studentMsg"></p>
+        </div>
+        <div class="card">
+          <div class="tableHeader"><h3>All Students</h3><span class="count" id="studentCount"></span></div>
+          <div class="tableWrapper"><table>
+            <thead><tr><th>Name</th><th>Email</th><th>Branch</th><th>CGPA</th><th>Applications</th><th>Actions</th></tr></thead>
+            <tbody id="studentTableBody"></tbody>
+          </table></div>
+        </div>
+      </section>
+
+      <!-- APPLICATIONS -->
+      <section id="view-applications" class="view">
+        <header class="viewHeader">
+          <div><h2>Applications</h2><p class="viewSub">Student applications and selection status</p></div>
+        </header>
+        <div class="card">
+          <h3 id="applicationFormTitle">New Application</h3>
+          <form id="applicationForm">
+            <input type="hidden" id="applicationId">
+            <div class="grid3">
+              <div><label>Student</label><select id="applicationStudent" required></select></div>
+              <div><label>Drive</label><select id="applicationDrive" required></select></div>
+              <div><label>Status</label>
+                <select id="applicationStatus" required>
+                  <option value="Applied">Applied</option>
+                  <option value="Shortlisted">Shortlisted</option>
+                  <option value="Selected">Selected</option>
+                  <option value="Rejected">Rejected</option>
+                </select>
+              </div>
+            </div>
+            <div class="actions">
+              <button type="submit">Save Application</button>
+              <button type="button" class="secondary" onclick="resetForm('application')">Cancel</button>
+            </div>
+          </form>
+          <p class="msg" id="applicationMsg"></p>
+        </div>
+        <div class="card">
+          <div class="tableHeader"><h3>All Applications</h3><span class="count" id="applicationCount"></span></div>
+          <div class="tableWrapper"><table>
+            <thead><tr><th>Student</th><th>Drive</th><th>Company</th><th>Status</th><th>Applied</th><th>Actions</th></tr></thead>
+            <tbody id="applicationTableBody"></tbody>
+          </table></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
