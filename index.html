@@ -185,6 +185,9 @@
           <label>Package (LPA)<input id="drivePackage" type="number" step="0.1" required></label>
           <label>Min CGPA<input id="driveMinCgpa" type="number" step="0.1" required></label>
           <label>Deadline<input id="driveDeadline" type="date" required></label>
+          <label class="span-2">Custom application question <small>(each company can ask applicants something of their own — shown on the apply form)</small>
+            <textarea id="driveCustomQuestion" rows="2" placeholder="e.g. Why do you want to join us?"></textarea>
+          </label>
           <div class="form-actions">
             <button type="submit" class="btn-primary">Save drive</button>
             <button type="button" class="btn-ghost" onclick="resetForm('drive')">Clear</button>
@@ -196,7 +199,7 @@
         <div class="panel-head"><h3>Placement drives</h3><span class="count-pill" id="driveCount"></span></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Company</th><th>Role</th><th>Package</th><th>Min CGPA</th><th>Deadline</th><th>Applicants</th><th></th></tr></thead>
+            <thead><tr><th>Company</th><th>Role</th><th>Package</th><th>Min CGPA</th><th>Deadline</th><th>Question</th><th>Applicants</th><th></th></tr></thead>
             <tbody id="driveTableBody"></tbody>
           </table>
         </div>
@@ -262,7 +265,7 @@
         <div class="panel-head"><h3>Applications</h3><span class="count-pill" id="applicationCount"></span></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Student</th><th>Role</th><th>Company</th><th>Status</th><th>Applied</th><th></th></tr></thead>
+            <thead><tr><th>Student</th><th>Role</th><th>Company</th><th>Resume</th><th>Answer</th><th>Status</th><th>Applied</th><th></th></tr></thead>
             <tbody id="applicationTableBody"></tbody>
           </table>
         </div>
@@ -283,6 +286,16 @@
           </div>
           <div class="auth-msg" id="profileMsg"></div>
         </form>
+      </div>
+      <div class="panel form-panel" style="max-width:520px">
+        <h3>My resume</h3>
+        <p class="hint">Upload a resume once — it's saved to a shared Drive folder and attached automatically whenever you apply. You get a link back you can copy and share yourself.</p>
+        <div id="resumeStatus" class="resume-status">No resume uploaded yet.</div>
+        <div class="form-actions" style="margin-top:10px">
+          <input type="file" id="resumeFile" accept=".pdf,.doc,.docx" style="max-width:260px">
+          <button type="button" class="btn-primary" id="resumeUploadBtn">Upload resume</button>
+        </div>
+        <div class="auth-msg" id="resumeMsg"></div>
       </div>
     </section>
 
@@ -327,6 +340,27 @@
       </div>
     </section>
   </main>
+</div>
+
+<!-- ======================= APPLY MODAL (Student) ======================= -->
+<div id="applyModal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <h3 id="applyModalTitle">Apply to drive</h3>
+    <div id="applyModalQuestionWrap" class="hidden">
+      <label id="applyModalQuestionLabel">Company's question</label>
+      <textarea id="applyAnswer" rows="3" placeholder="Your answer"></textarea>
+    </div>
+    <div class="apply-resume-block">
+      <label>Resume</label>
+      <div id="applyResumeStatus" class="resume-status">No resume on file yet — upload one to apply.</div>
+      <input type="file" id="applyResumeFile" accept=".pdf,.doc,.docx">
+    </div>
+    <div class="auth-msg" id="applyModalMsg"></div>
+    <div class="form-actions">
+      <button type="button" class="btn-primary" id="applyModalSubmit">Submit application</button>
+      <button type="button" class="btn-ghost" id="applyModalCancel">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <script src="script.js"></script>
