@@ -25,10 +25,11 @@
 
 const SHEETS = {
   companies: { name: "Companies", columns: ["id", "name", "industry", "website"] },
-  drives: { name: "Drives", columns: ["id", "companyId", "role", "package", "minCgpa", "deadline"] },
-  students: { name: "Students", columns: ["id", "userId", "name", "email", "branch", "cgpa"] },
-  applications: { name: "Applications", columns: ["id", "studentId", "driveId", "status", "appliedAt"] }
+  drives: { name: "Drives", columns: ["id", "companyId", "role", "package", "minCgpa", "deadline", "customQuestion"] },
+  students: { name: "Students", columns: ["id", "userId", "name", "email", "branch", "cgpa", "resumeUrl"] },
+  applications: { name: "Applications", columns: ["id", "studentId", "driveId", "status", "appliedAt", "answer", "resumeUrl"] }
 };
+const RESUME_FOLDER_NAME = "CPDMS Resumes";
 const USERS_SHEET = "Users";
 const USERS_COLUMNS = ["id", "name", "email", "passwordHash", "salt", "role", "companyId", "status"];
 const SESSIONS_SHEET = "Sessions";
@@ -52,6 +53,25 @@ function setupSheets() {
   if (stray && ss.getSheets().length > 1) ss.deleteSheet(stray);
 
   Logger.log("Setup complete. Admin login: admin@cpdms.com / Admin@123");
+}
+
+// Run this once after updating an already-seeded sheet to the newer schema
+// (adds resumeUrl / customQuestion / answer columns without wiping existing rows).
+function migrateSchema() {
+  addColumnIfMissing_(SHEETS.students.name, "resumeUrl");
+  addColumnIfMissing_(SHEETS.drives.name, "customQuestion");
+  addColumnIfMissing_(SHEETS.applications.name, "answer");
+  addColumnIfMissing_(SHEETS.applications.name, "resumeUrl");
+  Logger.log("Migration complete.");
+}
+
+function addColumnIfMissing_(sheetName, colName) {
+  const sheet = getSheet_(sheetName);
+  const lastCol = Math.max(sheet.getLastColumn(), 1);
+  const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  if (headers.indexOf(colName) === -1) {
+    sheet.getRange(1, lastCol + 1).setValue(colName);
+  }
 }
 
 function writeSheet_(ss, name, columns, rows) {
@@ -132,6 +152,7 @@ function handleRequest(entityKey, action, data) {
     const session = requireSession_(data);
 
     if (entityKey === "users") return handleUsers_(action, data, session);
+    if (entityKey === "uploads") return handleUploads_(action, data, session);
 
     const entity = SHEETS[entityKey];
     if (!entity) throw new Error("Unknown entity: " + entityKey);
@@ -163,7 +184,10 @@ function handleRequest(entityKey, action, data) {
       case "update": {
         const rowIndex = findRowById_(sheet, data.id);
         if (rowIndex === -1) throw new Error(capitalize_(entityKey) + " record not found");
-        const values = entity.columns.map(col => col === "id" ? data.id : (data[col] !== undefined ? data[col] : ""));
+        // Merge with the existing row so a partial payload (e.g. a Company only
+        // sending {id, customQuestion}) never blanks out the other fields.
+        const existing = sheet.getRange(rowIndex, 1, 1, entity.columns.length).getValues()[0];
+        const values = entity.columns.map((col, i) => col === "id" ? data.id : (data[col] !== undefined ? data[col] : existing[i]));
         sheet.getRange(rowIndex, 1, 1, values.length).setValues([values]);
         return jsonResponse({ success: true, message: capitalize_(entityKey) + " updated successfully" });
       }
@@ -195,6 +219,11 @@ function assertPermission_(entityKey, action, data, session) {
   if (entityKey === "companies" || entityKey === "drives") {
     if (role === "CDC") return;
     if (action === "read") return;
+    if (entityKey === "drives" && role === "Company" && action === "update") {
+      const drive = findRowByIdInSheet_(SHEETS.drives.name, data.id);
+      if (drive && drive.companyId === session.companyId) return;
+      throw new Error("You can only edit your own drives.");
+    }
     throw new Error("You do not have permission to modify " + entityKey + ".");
   }
 
@@ -343,6 +372,54 @@ function handleUsers_(action, data, session) {
     default:
       throw new Error("Invalid action");
   }
+}
+
+// ===================== Uploads (resumes, saved to Drive) =====================
+// A student uploads their own resume (or Admin/CDC uploads on a student's behalf);
+// the file is stored in a shared Drive folder, and the resulting link is saved onto
+// that Student's row so it can be reused on every future application and shared.
+function handleUploads_(action, data, session) {
+  if (action !== "resume") throw new Error("Invalid upload action");
+  if (!data.base64 || !data.fileName) throw new Error("A resume file is required.");
+
+  const role = session.role;
+  let studentRecord;
+  if (role === "Student") {
+    studentRecord = getStudentRecordByUserId_(session.userId);
+    if (!studentRecord) throw new Error("No student profile linked to your account.");
+  } else if (role === "Admin" || role === "CDC") {
+    if (!data.studentId) throw new Error("studentId is required.");
+    studentRecord = findRowByIdInSheet_(SHEETS.students.name, data.studentId);
+    if (!studentRecord) throw new Error("Student not found.");
+  } else {
+    throw new Error("You do not have permission to upload a resume.");
+  }
+
+  const bytes = Utilities.base64Decode(data.base64);
+  const mimeType = data.mimeType || "application/pdf";
+  const blob = Utilities.newBlob(bytes, mimeType, data.fileName);
+  const safeName = String(studentRecord.name || "resume").replace(/[^a-z0-9]+/gi, "_");
+  blob.setName(safeName + "_" + data.fileName);
+
+  const folder = getResumeFolder_();
+  const file = folder.createFile(blob);
+  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (err) { /* sharing restricted by workspace policy; file still saved */ }
+  const url = "https://drive.google.com/file/d/" + file.getId() + "/view";
+
+  const sheet = getSheet_(SHEETS.students.name);
+  const rowIndex = findRowById_(sheet, studentRecord.id);
+  if (rowIndex !== -1) {
+    const col = SHEETS.students.columns.indexOf("resumeUrl") + 1;
+    sheet.getRange(rowIndex, col).setValue(url);
+  }
+
+  return jsonResponse({ success: true, message: "Resume uploaded successfully.", url: url, studentId: studentRecord.id });
+}
+
+function getResumeFolder_() {
+  const it = DriveApp.getFoldersByName(RESUME_FOLDER_NAME);
+  if (it.hasNext()) return it.next();
+  return DriveApp.createFolder(RESUME_FOLDER_NAME);
 }
 
 // ===================== Auth =====================
