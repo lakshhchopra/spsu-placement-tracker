@@ -302,6 +302,9 @@ function wireAppForms() {
   document.getElementById("applicationForm").addEventListener("submit", onApplicationSubmit);
   document.getElementById("profileForm").addEventListener("submit", onProfileSubmit);
   document.getElementById("userForm").addEventListener("submit", onUserSubmit);
+  document.getElementById("resumeUploadBtn").addEventListener("click", onResumeUploadClick);
+  document.getElementById("applyModalSubmit").addEventListener("click", submitApplyModal);
+  document.getElementById("applyModalCancel").addEventListener("click", closeApplyModal);
 }
 
 function resetForm(entity) {
@@ -381,7 +384,8 @@ async function onDriveSubmit(e) {
     role: document.getElementById("driveRole").value.trim(),
     package: parseFloat(document.getElementById("drivePackage").value),
     minCgpa: parseFloat(document.getElementById("driveMinCgpa").value),
-    deadline: document.getElementById("driveDeadline").value
+    deadline: document.getElementById("driveDeadline").value,
+    customQuestion: document.getElementById("driveCustomQuestion").value.trim()
   };
   const res = await apiRequest("drives", id ? "update" : "create", payload);
   if (!res.success) { formMsg("driveMsg", res.message, "error"); return; }
@@ -400,6 +404,7 @@ function editDrive(id) {
   document.getElementById("drivePackage").value = d.package;
   document.getElementById("driveMinCgpa").value = d.minCgpa;
   document.getElementById("driveDeadline").value = d.deadline;
+  document.getElementById("driveCustomQuestion").value = d.customQuestion || "";
   document.getElementById("driveFormTitle").innerText = "Update Drive";
 }
 
@@ -410,15 +415,107 @@ async function deleteDrive(id) {
   if (res.success) { await loadData(); renderDrives(); }
 }
 
-async function applyToDrive(driveId) {
+// Each company can set its own custom question on a drive (see editDriveQuestion / driveCustomQuestion),
+// so "applying" opens a small modal: answer the company's question (if any) and attach a resume
+// (reusing the one already saved on the student's profile, or uploading a fresh one on the spot).
+let applyingDriveId = null;
+
+function applyToDrive(driveId) {
   const me = myStudentRecord();
   if (!me) { toast("No student profile linked to your account yet.", "error"); return; }
   const drive = driveById(driveId);
   if (!drive) return;
   if (me.cgpa < drive.minCgpa) { toast("You do not meet the minimum CGPA for this drive.", "error"); return; }
   if (new Date(drive.deadline) < new Date(new Date().toDateString())) { toast("Application deadline has passed.", "error"); return; }
-  if (!confirm(`Apply to ${drive.role} at ${(companyById(drive.companyId) || {}).name || ""}?`)) return;
-  const res = await apiRequest("applications", "create", { studentId: me.id, driveId, status: "Applied" });
+
+  applyingDriveId = driveId;
+  const company = companyById(drive.companyId);
+  document.getElementById("applyModalTitle").innerText = `Apply — ${drive.role} at ${company ? company.name : ""}`;
+
+  const qWrap = document.getElementById("applyModalQuestionWrap");
+  if (drive.customQuestion) {
+    qWrap.classList.remove("hidden");
+    document.getElementById("applyModalQuestionLabel").innerText = drive.customQuestion;
+    document.getElementById("applyAnswer").value = "";
+  } else {
+    qWrap.classList.add("hidden");
+  }
+
+  document.getElementById("applyResumeFile").value = "";
+  renderApplyResumeStatus(me.resumeUrl);
+  formMsg("applyModalMsg", "", "");
+  document.getElementById("applyModal").classList.remove("hidden");
+}
+
+function renderApplyResumeStatus(resumeUrl) {
+  const el = document.getElementById("applyResumeStatus");
+  el.innerHTML = resumeUrl
+    ? `Using your saved resume — <a href="${escapeHtml(resumeUrl)}" target="_blank" rel="noopener">view it</a>, or choose a new file below to replace it.`
+    : `No resume on file yet — choose a file below to attach one (required to apply).`;
+}
+
+function closeApplyModal() {
+  applyingDriveId = null;
+  document.getElementById("applyModal").classList.add("hidden");
+}
+
+async function submitApplyModal() {
+  const me = myStudentRecord();
+  const drive = driveById(applyingDriveId);
+  if (!me || !drive) { closeApplyModal(); return; }
+
+  const btn = document.getElementById("applyModalSubmit");
+  btn.disabled = true;
+  try {
+    let resumeUrl = me.resumeUrl || "";
+    const file = document.getElementById("applyResumeFile").files[0];
+    if (file) {
+      const upload = await uploadResumeFile(file);
+      if (!upload.success) { formMsg("applyModalMsg", upload.message || "Resume upload failed.", "error"); return; }
+      resumeUrl = upload.url;
+    }
+    if (!resumeUrl) { formMsg("applyModalMsg", "Please attach a resume before applying.", "error"); return; }
+
+    const answer = drive.customQuestion ? document.getElementById("applyAnswer").value.trim() : "";
+    if (drive.customQuestion && !answer) { formMsg("applyModalMsg", "Please answer the company's question.", "error"); return; }
+
+    const res = await apiRequest("applications", "create", {
+      studentId: me.id, driveId: applyingDriveId, status: "Applied", answer, resumeUrl
+    });
+    if (!res.success) { formMsg("applyModalMsg", res.message, "error"); return; }
+    toast(res.message, "success");
+    closeApplyModal();
+    await loadData();
+    renderCurrentView();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(new Error("Could not read file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+const MAX_RESUME_BYTES = 5 * 1024 * 1024; // 5MB
+
+async function uploadResumeFile(file) {
+  if (file.size > MAX_RESUME_BYTES) return { success: false, message: "Resume must be under 5MB." };
+  const base64 = await fileToBase64(file);
+  return apiRequest("uploads", "resume", { fileName: file.name, mimeType: file.type || "application/octet-stream", base64 });
+}
+
+// ================= DRIVE CUSTOM QUESTION (Company, on their own drives) =================
+async function editDriveQuestion(id) {
+  const d = driveById(id);
+  if (!d) return;
+  const q = prompt("Custom question shown to students applying to this drive:", d.customQuestion || "");
+  if (q === null) return;
+  const res = await apiRequest("drives", "update", { id, customQuestion: q.trim() });
   toast(res.message, res.success ? "success" : "error");
   if (res.success) { await loadData(); renderDrives(); }
 }
@@ -435,11 +532,14 @@ function renderDrives() {
   const role = session.user.role;
   const body = document.getElementById("driveTableBody");
   document.getElementById("driveCount").innerText = `${db.drives.length} drive${db.drives.length === 1 ? "" : "s"}`;
-  if (db.drives.length === 0) { body.innerHTML = `<tr class="empty-row"><td colspan="7">No placement drives yet.</td></tr>`; return; }
+  if (db.drives.length === 0) { body.innerHTML = `<tr class="empty-row"><td colspan="8">No placement drives yet.</td></tr>`; return; }
   const canEdit = role === "Admin" || role === "CDC";
   body.innerHTML = db.drives.map(d => {
     const company = companyById(d.companyId);
     const applicants = db.applications.filter(a => a.driveId === d.id).length;
+    const questionCell = d.customQuestion
+      ? `<span class="question-chip" title="${escapeHtml(d.customQuestion)}">${escapeHtml(d.customQuestion.slice(0, 28))}${d.customQuestion.length > 28 ? "…" : ""}</span>`
+      : `<span class="muted">—</span>`;
     let actions = "";
     if (canEdit) {
       actions = `<button class="action-btn edit-btn" onclick="editDrive('${d.id}')">Edit</button>
@@ -448,12 +548,15 @@ function renderDrives() {
       const me = myStudentRecord();
       const already = me && db.applications.some(a => a.studentId === me.id && a.driveId === d.id);
       actions = already ? `<span class="badge shortlisted">Applied</span>` : `<button class="action-btn edit-btn" onclick="applyToDrive('${d.id}')">Apply</button>`;
+    } else if (role === "Company" && d.companyId === session.user.companyId) {
+      actions = `<span class="count-pill">${applicants} applicant${applicants === 1 ? "" : "s"}</span>
+        <button class="action-btn edit-btn" onclick="editDriveQuestion('${d.id}')">Edit question</button>`;
     } else {
       actions = `<span class="count-pill">${applicants} applicant${applicants === 1 ? "" : "s"}</span>`;
     }
     return `<tr>
       <td>${escapeHtml(company ? company.name : "Unknown")}</td><td>${escapeHtml(d.role)}</td><td>${d.package} LPA</td>
-      <td>${d.minCgpa}</td><td>${escapeHtml(d.deadline)}</td><td>${applicants}</td><td>${actions}</td>
+      <td>${d.minCgpa}</td><td>${escapeHtml(d.deadline)}</td><td>${questionCell}</td><td>${applicants}</td><td>${actions}</td>
     </tr>`;
   }).join("");
 }
@@ -586,11 +689,17 @@ function renderApplications() {
   const role = session.user.role;
   const body = document.getElementById("applicationTableBody");
   document.getElementById("applicationCount").innerText = `${db.applications.length} application${db.applications.length === 1 ? "" : "s"}`;
-  if (db.applications.length === 0) { body.innerHTML = `<tr class="empty-row"><td colspan="6">No applications yet.</td></tr>`; return; }
+  if (db.applications.length === 0) { body.innerHTML = `<tr class="empty-row"><td colspan="8">No applications yet.</td></tr>`; return; }
   body.innerHTML = db.applications.slice().reverse().map(a => {
     const student = studentById(a.studentId);
     const drive = driveById(a.driveId);
     const company = drive ? companyById(drive.companyId) : null;
+    const resumeCell = a.resumeUrl
+      ? `<a href="${escapeHtml(a.resumeUrl)}" target="_blank" rel="noopener" class="action-btn edit-btn" style="display:inline-block;text-decoration:none">View</a>`
+      : `<span class="muted">—</span>`;
+    const answerCell = a.answer
+      ? `<span class="question-chip" title="${escapeHtml(a.answer)}">${escapeHtml(a.answer.slice(0, 24))}${a.answer.length > 24 ? "…" : ""}</span>`
+      : `<span class="muted">—</span>`;
     let actions = "";
     if (role === "Admin" || role === "CDC") {
       actions = `<button class="action-btn edit-btn" onclick="editApplication('${a.id}')">Edit</button>
@@ -603,6 +712,7 @@ function renderApplications() {
     return `<tr>
       <td>${escapeHtml(student ? student.name : "Unknown")}</td><td>${escapeHtml(drive ? drive.role : "Unknown")}</td>
       <td>${escapeHtml(company ? company.name : "Unknown")}</td>
+      <td>${resumeCell}</td><td>${answerCell}</td>
       <td><span class="badge ${statusBadgeClass(a.status)}">${escapeHtml(a.status)}</span></td>
       <td>${escapeHtml(a.appliedAt)}</td><td>${actions}</td>
     </tr>`;
@@ -618,6 +728,28 @@ function renderProfile() {
   document.getElementById("profileBranch").value = me.branch;
   document.getElementById("profileCgpa").value = me.cgpa;
   document.getElementById("profileForm").dataset.id = me.id;
+
+  const statusEl = document.getElementById("resumeStatus");
+  statusEl.innerHTML = me.resumeUrl
+    ? `Resume on file — <a href="${escapeHtml(me.resumeUrl)}" target="_blank" rel="noopener">view / share this link</a>.`
+    : `No resume uploaded yet.`;
+}
+
+async function onResumeUploadClick() {
+  const me = myStudentRecord();
+  if (!me) { formMsg("resumeMsg", "No student profile linked to your account.", "error"); return; }
+  const file = document.getElementById("resumeFile").files[0];
+  if (!file) { formMsg("resumeMsg", "Choose a file first.", "error"); return; }
+  const btn = document.getElementById("resumeUploadBtn");
+  btn.disabled = true;
+  const res = await uploadResumeFile(file);
+  btn.disabled = false;
+  formMsg("resumeMsg", res.message, res.success ? "success" : "error");
+  if (res.success) {
+    document.getElementById("resumeFile").value = "";
+    await loadData();
+    renderProfile();
+  }
 }
 
 async function onProfileSubmit(e) {
