@@ -1,73 +1,265 @@
 /*
   CPDMS — Campus Placement Drive Management System.
-  Enterprise-style multi-entity CRUD: Companies, Placement Drives, Students, Applications.
-
-  Storage: browser localStorage, one "sheet" (array) per entity — mirrors the four-sheet
-  Google Apps Script backend in backend/Code.gs (Companies / Drives / Students / Applications
-  tabs in one spreadsheet). Swapping storage.js calls here for fetch() calls to a deployed
-  Apps Script Web App persists the same shape of data server-side instead.
+  Real multi-role frontend wired to a Google Apps Script backend (backend/Code.gs),
+  which stores every record in a bound Google Spreadsheet. No localStorage database,
+  no hardcoded application data — everything below comes from fetch() calls to the
+  deployed Apps Script Web App. Passwords are never held in plaintext; the server
+  hashes and verifies them, and this file only ever stores an opaque session token.
 */
 
-const KEYS = {
-  companies: "cpdms_companies",
-  drives: "cpdms_drives",
-  students: "cpdms_students",
-  applications: "cpdms_applications"
+const API_URL = "https://script.google.com/macros/s/AKfycbyTt66u6nqrfpV-ClTA2xDucdNjzVx3dxyxijjtzwiL5UMq88RSo5KXqzffvG4XERtO/exec";
+
+let session = null;
+try { session = JSON.parse(localStorage.getItem("cpdms_session") || "null"); } catch (e) { session = null; }
+
+let db = { companies: [], drives: [], students: [], applications: [], users: [] };
+let currentView = "dashboard";
+let charts = {};
+
+// ===================== API layer =====================
+async function apiRequest(entity, action, payload) {
+  payload = Object.assign({}, payload || {});
+  payload.entity = entity;
+  payload.action = action;
+  if (session && session.token) payload.token = session.token;
+
+  let res, json;
+  try {
+    if (action === "read") {
+      const qs = new URLSearchParams(payload).toString();
+      res = await fetch(API_URL + "?" + qs, { method: "GET" });
+    } else {
+      res = await fetch(API_URL, { method: "POST", body: JSON.stringify(payload) });
+    }
+    json = await res.json();
+  } catch (err) {
+    return { success: false, message: "Network error reaching the backend. Check your connection and try again." };
+  }
+  if (json && json.success === false && /session expired|not authenticated/i.test(json.message || "")) {
+    clearSession();
+    showAuthScreen();
+  }
+  return json;
+}
+
+function clearSession() {
+  session = null;
+  localStorage.removeItem("cpdms_session");
+}
+
+function saveSession(token, user) {
+  session = { token, user };
+  localStorage.setItem("cpdms_session", JSON.stringify(session));
+}
+
+// ===================== Parallax (landing) =====================
+(function initParallax() {
+  const layers = document.querySelectorAll(".parallax-layer");
+  if (!layers.length) return;
+  window.addEventListener("mousemove", e => {
+    const x = (e.clientX / window.innerWidth) - 0.5;
+    const y = (e.clientY / window.innerHeight) - 0.5;
+    layers.forEach((layer, i) => {
+      const depth = (i + 1) * 10;
+      layer.style.transform = `translate(${x * depth}px, ${y * depth}px)`;
+    });
+  });
+  window.addEventListener("scroll", () => {
+    const sc = window.scrollY;
+    layers.forEach((layer, i) => {
+      layer.style.transform += ` translateY(${sc * (0.03 * (i + 1))}px)`;
+    });
+  }, { passive: true });
+})();
+
+// ===================== Boot =====================
+document.addEventListener("DOMContentLoaded", () => {
+  wireAuthForms();
+  wireAppForms();
+  if (session && session.token) {
+    bootApp();
+  } else {
+    showAuthScreen();
+  }
+});
+
+function showAuthScreen() {
+  document.getElementById("authScreen").classList.remove("hidden");
+  document.getElementById("appShell").classList.add("hidden");
+}
+
+async function bootApp() {
+  document.getElementById("authScreen").classList.add("hidden");
+  document.getElementById("appShell").classList.remove("hidden");
+  renderUserChip();
+  buildNav();
+  await switchView("dashboard");
+}
+
+// ===================== Auth forms =====================
+function wireAuthForms() {
+  document.getElementById("loginForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const btn = document.getElementById("loginSubmit");
+    btn.disabled = true;
+    const email = document.getElementById("loginEmail").value.trim();
+    const password = document.getElementById("loginPassword").value;
+    const res = await apiRequest("auth", "login", { email, password });
+    btn.disabled = false;
+    if (!res.success) { authMsg("loginMsg", res.message || "Login failed.", "error"); return; }
+    saveSession(res.token, res.user);
+    document.getElementById("loginForm").reset();
+    authMsg("loginMsg", "", "");
+    bootApp();
+  });
+
+  document.getElementById("forgotLink").addEventListener("click", e => {
+    e.preventDefault();
+    document.getElementById("loginCard").classList.add("hidden");
+    document.getElementById("forgotCard").classList.remove("hidden");
+  });
+  document.getElementById("backToLogin").addEventListener("click", () => {
+    document.getElementById("forgotCard").classList.add("hidden");
+    document.getElementById("loginCard").classList.remove("hidden");
+    document.getElementById("forgotForm").classList.remove("hidden");
+    document.getElementById("resetForm").classList.add("hidden");
+  });
+
+  document.getElementById("forgotForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const email = document.getElementById("forgotEmail").value.trim();
+    const res = await apiRequest("auth", "forgot", { email });
+    authMsg("forgotMsg", res.message || "If that account exists, a reset code has been sent.", res.success ? "success" : "error");
+    if (res.success) {
+      document.getElementById("forgotForm").classList.add("hidden");
+      document.getElementById("resetForm").classList.remove("hidden");
+      document.getElementById("resetForm").dataset.email = email;
+    }
+  });
+
+  document.getElementById("resetForm").addEventListener("submit", async e => {
+    e.preventDefault();
+    const email = document.getElementById("resetForm").dataset.email;
+    const code = document.getElementById("resetCode").value.trim();
+    const newPassword = document.getElementById("resetPassword").value;
+    const res = await apiRequest("auth", "reset", { email, code, newPassword });
+    authMsg("resetMsg", res.message || "", res.success ? "success" : "error");
+    if (res.success) {
+      setTimeout(() => {
+        document.getElementById("forgotCard").classList.add("hidden");
+        document.getElementById("loginCard").classList.remove("hidden");
+        document.getElementById("forgotForm").classList.remove("hidden");
+        document.getElementById("resetForm").classList.add("hidden");
+        document.getElementById("resetForm").reset();
+        document.getElementById("forgotForm").reset();
+      }, 1200);
+    }
+  });
+}
+
+function authMsg(id, text, type) {
+  const el = document.getElementById(id);
+  el.innerText = text;
+  el.className = "auth-msg " + type;
+}
+
+// ===================== Nav / shell =====================
+const NAV_BY_ROLE = {
+  Admin: [
+    { id: "dashboard", label: "Dashboard" },
+    { id: "companies", label: "Companies" },
+    { id: "drives", label: "Drives" },
+    { id: "students", label: "Students" },
+    { id: "applications", label: "Applications" },
+    { id: "users", label: "Users" }
+  ],
+  CDC: [
+    { id: "dashboard", label: "Dashboard" },
+    { id: "companies", label: "Companies" },
+    { id: "drives", label: "Drives" },
+    { id: "students", label: "Students" },
+    { id: "applications", label: "Applications" }
+  ],
+  Company: [
+    { id: "dashboard", label: "Dashboard" },
+    { id: "drives", label: "Our drives" },
+    { id: "applications", label: "Applicants" }
+  ],
+  Student: [
+    { id: "dashboard", label: "Dashboard" },
+    { id: "drives", label: "Browse drives" },
+    { id: "applications", label: "My applications" },
+    { id: "profile", label: "My profile" }
+  ]
+};
+const VIEW_TITLES = {
+  dashboard: "Dashboard", companies: "Companies", drives: "Placement drives",
+  students: "Students", applications: "Applications", profile: "My profile", users: "User accounts"
 };
 
-let db = {
-  companies: JSON.parse(localStorage.getItem(KEYS.companies) || "null"),
-  drives: JSON.parse(localStorage.getItem(KEYS.drives) || "null"),
-  students: JSON.parse(localStorage.getItem(KEYS.students) || "null"),
-  applications: JSON.parse(localStorage.getItem(KEYS.applications) || "null")
-};
-
-function persist(entity) {
-  localStorage.setItem(KEYS[entity], JSON.stringify(db[entity]));
+function buildNav() {
+  const role = session.user.role;
+  const items = NAV_BY_ROLE[role] || NAV_BY_ROLE.Student;
+  const nav = document.getElementById("sideNav");
+  nav.innerHTML = items.map(it => `<button class="nav-btn" data-view="${it.id}">${it.label}</button>`).join("");
+  nav.querySelectorAll(".nav-btn").forEach(btn => {
+    btn.addEventListener("click", () => switchView(btn.dataset.view));
+  });
+  applyRoleVisibility(role);
 }
 
-function uid(prefix) {
-  return prefix + "-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function applyRoleVisibility(role) {
+  document.getElementById("driveFormPanel").classList.toggle("hidden", !(role === "Admin" || role === "CDC"));
+  document.getElementById("applicationFormPanel").classList.toggle("hidden", role === "Company");
+  document.getElementById("applicationStudentWrap").classList.toggle("hidden", role === "Student");
+  document.getElementById("applicationStatusWrap").classList.toggle("hidden", role === "Student");
 }
 
-// ---------- Seed demo data on first run ----------
-if (!db.companies) {
-  db.companies = [
-    { id: "c-tcs", name: "TCS", industry: "IT Services", website: "tcs.com" },
-    { id: "c-infosys", name: "Infosys", industry: "IT Services", website: "infosys.com" },
-    { id: "c-wipro", name: "Wipro", industry: "IT Services", website: "wipro.com" }
-  ];
-  persist("companies");
-}
-if (!db.drives) {
-  db.drives = [
-    { id: "d-1", companyId: "c-tcs", role: "SDE I", package: 7.5, minCgpa: 6.0, deadline: "2026-11-20" },
-    { id: "d-2", companyId: "c-infosys", role: "Systems Engineer", package: 6.0, minCgpa: 7.0, deadline: "2026-11-12" },
-    { id: "d-3", companyId: "c-wipro", role: "Project Engineer", package: 5.5, minCgpa: 6.5, deadline: "2026-12-01" }
-  ];
-  persist("drives");
-}
-if (!db.students) {
-  db.students = [
-    { id: "s-1", name: "Aarav Mehta", email: "aarav.mehta@spsu.ac.in", branch: "CSE", cgpa: 8.2 },
-    { id: "s-2", name: "Ishita Sharma", email: "ishita.sharma@spsu.ac.in", branch: "IT", cgpa: 8.9 },
-    { id: "s-3", name: "Rohan Verma", email: "rohan.verma@spsu.ac.in", branch: "CSE", cgpa: 7.1 }
-  ];
-  persist("students");
-}
-if (!db.applications) {
-  db.applications = [
-    { id: "a-1", studentId: "s-1", driveId: "d-1", status: "Shortlisted", appliedAt: new Date().toLocaleString() },
-    { id: "a-2", studentId: "s-2", driveId: "d-2", status: "Selected", appliedAt: new Date().toLocaleString() },
-    { id: "a-3", studentId: "s-3", driveId: "d-3", status: "Applied", appliedAt: new Date().toLocaleString() }
-  ];
-  persist("applications");
+function renderUserChip() {
+  const u = session.user;
+  document.getElementById("userAvatar").innerText = (u.name || "?").charAt(0).toUpperCase();
+  document.getElementById("userName").innerText = u.name;
+  document.getElementById("userRole").innerText = u.role;
 }
 
-// ---------- Lookups ----------
+document.getElementById("logoutBtn").addEventListener("click", async () => {
+  await apiRequest("auth", "logout", {});
+  clearSession();
+  location.reload();
+});
+
+async function switchView(viewId) {
+  currentView = viewId;
+  document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === viewId));
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + viewId));
+  document.getElementById("viewTitle").innerText = VIEW_TITLES[viewId] || "CPDMS";
+  await loadData();
+  renderCurrentView();
+}
+
+// ===================== Data loading =====================
+async function loadData() {
+  const role = session.user.role;
+  const reads = [
+    apiRequest("companies", "read", {}),
+    apiRequest("drives", "read", {}),
+    apiRequest("applications", "read", {})
+  ];
+  reads.push((role === "Admin" || role === "CDC" || role === "Company") ? apiRequest("students", "read", {}) : apiRequest("students", "read", {}));
+  reads.push(role === "Admin" ? apiRequest("users", "read", {}) : Promise.resolve({ success: true, data: [] }));
+
+  const [companies, drives, applications, students, users] = await Promise.all(reads);
+  db.companies = companies.success ? companies.data : [];
+  db.drives = drives.success ? drives.data : [];
+  db.applications = applications.success ? applications.data : [];
+  db.students = students.success ? students.data : [];
+  db.users = users.success ? users.data : [];
+}
+
 const companyById = id => db.companies.find(c => c.id === id);
 const driveById = id => db.drives.find(d => d.id === id);
 const studentById = id => db.students.find(s => s.id === id);
+const myStudentRecord = () => db.students.find(s => s.userId === session.user.id);
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -75,50 +267,76 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function showMessage(entity, text, type) {
-  const el = document.getElementById(entity + "Msg");
-  if (!el) return;
+function toast(text, type) {
+  const el = document.getElementById("toast");
   el.innerText = text;
-  el.className = "msg " + type;
-  setTimeout(() => { el.innerText = ""; }, 3500);
+  el.className = "toast show " + (type || "");
+  setTimeout(() => { el.classList.remove("show"); }, 3200);
 }
 
-// ---------- Navigation ----------
-document.querySelectorAll(".navBtn").forEach(btn => {
-  btn.addEventListener("click", () => switchView(btn.dataset.view));
-});
+function formMsg(id, text, type) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerText = text;
+  el.className = "auth-msg " + (type || "");
+  if (text) setTimeout(() => { el.innerText = ""; }, 3500);
+}
 
-function switchView(view) {
-  document.querySelectorAll(".navBtn").forEach(b => b.classList.toggle("active", b.dataset.view === view));
-  document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === "view-" + view));
-  renderAll();
+function renderCurrentView() {
+  switch (currentView) {
+    case "dashboard": renderDashboard(); break;
+    case "companies": renderCompanies(); break;
+    case "drives": renderDrives(); break;
+    case "students": renderStudents(); break;
+    case "applications": renderApplications(); break;
+    case "profile": renderProfile(); break;
+    case "users": renderUsers(); break;
+  }
+}
+
+// ===================== Forms wiring =====================
+function wireAppForms() {
+  document.getElementById("companyForm").addEventListener("submit", onCompanySubmit);
+  document.getElementById("driveForm").addEventListener("submit", onDriveSubmit);
+  document.getElementById("studentForm").addEventListener("submit", onStudentSubmit);
+  document.getElementById("applicationForm").addEventListener("submit", onApplicationSubmit);
+  document.getElementById("profileForm").addEventListener("submit", onProfileSubmit);
+  document.getElementById("userForm").addEventListener("submit", onUserSubmit);
+}
+
+function resetForm(entity) {
+  const map = {
+    company: ["companyForm", "Add Company"],
+    drive: ["driveForm", "Add Drive"],
+    student: ["studentForm", "Add Student"],
+    application: ["applicationForm", "New Application"],
+    userForm: ["userForm", "Add User"]
+  };
+  const [formId, title] = map[entity];
+  document.getElementById(formId).reset();
+  const idField = document.getElementById(formId === "userForm" ? "userId" : entity + "Id");
+  if (idField) idField.value = "";
+  const titleEl = document.getElementById((formId === "userForm" ? "userForm" : entity) + "FormTitle");
+  if (titleEl) titleEl.innerText = title;
 }
 
 // ================= COMPANIES =================
-const companyForm = document.getElementById("companyForm");
-companyForm.addEventListener("submit", e => {
+async function onCompanySubmit(e) {
   e.preventDefault();
   const id = document.getElementById("companyId").value;
   const payload = {
-    id: id || uid("c"),
+    id,
     name: document.getElementById("companyName").value.trim(),
     industry: document.getElementById("companyIndustry").value.trim(),
     website: document.getElementById("companyWebsite").value.trim()
   };
-  if (!payload.name || !payload.industry) { showMessage("company", "Company name and industry are required.", "error"); return; }
-
-  if (id) {
-    const idx = db.companies.findIndex(c => c.id === id);
-    db.companies[idx] = payload;
-    showMessage("company", "Company updated successfully.", "success");
-  } else {
-    db.companies.push(payload);
-    showMessage("company", "Company created successfully.", "success");
-  }
-  persist("companies");
+  const res = await apiRequest("companies", id ? "update" : "create", payload);
+  if (!res.success) { formMsg("companyMsg", res.message, "error"); return; }
+  formMsg("companyMsg", res.message, "success");
   resetForm("company");
-  renderAll();
-});
+  await loadData();
+  renderCompanies();
+}
 
 function editCompany(id) {
   const c = companyById(id);
@@ -130,72 +348,48 @@ function editCompany(id) {
   document.getElementById("companyFormTitle").innerText = "Update Company";
 }
 
-function deleteCompany(id) {
-  const linkedDrives = db.drives.some(d => d.companyId === id);
-  if (linkedDrives) {
-    showMessage("company", "Cannot delete: this company has placement drives linked to it.", "error");
-    return;
-  }
+async function deleteCompany(id) {
   if (!confirm("Delete this company?")) return;
-  db.companies = db.companies.filter(c => c.id !== id);
-  persist("companies");
-  showMessage("company", "Company deleted.", "success");
-  renderAll();
+  const res = await apiRequest("companies", "delete", { id });
+  toast(res.message, res.success ? "success" : "error");
+  if (res.success) { await loadData(); renderCompanies(); }
 }
 
 function renderCompanies() {
   const body = document.getElementById("companyTableBody");
   document.getElementById("companyCount").innerText = `${db.companies.length} compan${db.companies.length === 1 ? "y" : "ies"}`;
-  if (db.companies.length === 0) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="5">No companies yet.</td></tr>`;
-    return;
-  }
+  const role = session.user.role;
+  const canEdit = role === "Admin" || role === "CDC";
+  if (db.companies.length === 0) { body.innerHTML = `<tr class="empty-row"><td colspan="5">No companies yet.</td></tr>`; return; }
   body.innerHTML = db.companies.map(c => {
     const openDrives = db.drives.filter(d => d.companyId === c.id).length;
     return `<tr>
-      <td>${escapeHtml(c.name)}</td>
-      <td>${escapeHtml(c.industry)}</td>
-      <td>${escapeHtml(c.website)}</td>
-      <td>${openDrives}</td>
-      <td>
-        <button class="actionBtn editBtn" onclick="editCompany('${c.id}')">Edit</button>
-        <button class="actionBtn deleteBtn" onclick="deleteCompany('${c.id}')">Delete</button>
-      </td>
+      <td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.industry)}</td><td>${escapeHtml(c.website)}</td><td>${openDrives}</td>
+      <td>${canEdit ? `<button class="action-btn edit-btn" onclick="editCompany('${c.id}')">Edit</button>
+      <button class="action-btn delete-btn" onclick="deleteCompany('${c.id}')">Delete</button>` : ""}</td>
     </tr>`;
   }).join("");
 }
 
 // ================= DRIVES =================
-const driveForm = document.getElementById("driveForm");
-driveForm.addEventListener("submit", e => {
+async function onDriveSubmit(e) {
   e.preventDefault();
   const id = document.getElementById("driveId").value;
   const payload = {
-    id: id || uid("d"),
+    id,
     companyId: document.getElementById("driveCompany").value,
     role: document.getElementById("driveRole").value.trim(),
     package: parseFloat(document.getElementById("drivePackage").value),
     minCgpa: parseFloat(document.getElementById("driveMinCgpa").value),
     deadline: document.getElementById("driveDeadline").value
   };
-  if (!payload.companyId || !payload.role) { showMessage("drive", "Company and role are required.", "error"); return; }
-  if (payload.minCgpa < 0 || payload.minCgpa > 10) { showMessage("drive", "Minimum CGPA must be between 0 and 10.", "error"); return; }
-  if (!payload.deadline || new Date(payload.deadline) < new Date(new Date().toDateString())) {
-    showMessage("drive", "Deadline must be a future date.", "error"); return;
-  }
-
-  if (id) {
-    const idx = db.drives.findIndex(d => d.id === id);
-    db.drives[idx] = payload;
-    showMessage("drive", "Drive updated successfully.", "success");
-  } else {
-    db.drives.push(payload);
-    showMessage("drive", "Drive created successfully.", "success");
-  }
-  persist("drives");
+  const res = await apiRequest("drives", id ? "update" : "create", payload);
+  if (!res.success) { formMsg("driveMsg", res.message, "error"); return; }
+  formMsg("driveMsg", res.message, "success");
   resetForm("drive");
-  renderAll();
-});
+  await loadData();
+  renderDrives();
+}
 
 function editDrive(id) {
   const d = driveById(id);
@@ -209,17 +403,24 @@ function editDrive(id) {
   document.getElementById("driveFormTitle").innerText = "Update Drive";
 }
 
-function deleteDrive(id) {
-  const linkedApps = db.applications.some(a => a.driveId === id);
-  if (linkedApps) {
-    showMessage("drive", "Cannot delete: this drive has applications linked to it.", "error");
-    return;
-  }
+async function deleteDrive(id) {
   if (!confirm("Delete this drive?")) return;
-  db.drives = db.drives.filter(d => d.id !== id);
-  persist("drives");
-  showMessage("drive", "Drive deleted.", "success");
-  renderAll();
+  const res = await apiRequest("drives", "delete", { id });
+  toast(res.message, res.success ? "success" : "error");
+  if (res.success) { await loadData(); renderDrives(); }
+}
+
+async function applyToDrive(driveId) {
+  const me = myStudentRecord();
+  if (!me) { toast("No student profile linked to your account yet.", "error"); return; }
+  const drive = driveById(driveId);
+  if (!drive) return;
+  if (me.cgpa < drive.minCgpa) { toast("You do not meet the minimum CGPA for this drive.", "error"); return; }
+  if (new Date(drive.deadline) < new Date(new Date().toDateString())) { toast("Application deadline has passed.", "error"); return; }
+  if (!confirm(`Apply to ${drive.role} at ${(companyById(drive.companyId) || {}).name || ""}?`)) return;
+  const res = await apiRequest("applications", "create", { studentId: me.id, driveId, status: "Applied" });
+  toast(res.message, res.success ? "success" : "error");
+  if (res.success) { await loadData(); renderDrives(); }
 }
 
 function renderDriveCompanyOptions() {
@@ -230,58 +431,52 @@ function renderDriveCompanyOptions() {
 }
 
 function renderDrives() {
+  renderDriveCompanyOptions();
+  const role = session.user.role;
   const body = document.getElementById("driveTableBody");
   document.getElementById("driveCount").innerText = `${db.drives.length} drive${db.drives.length === 1 ? "" : "s"}`;
-  if (db.drives.length === 0) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="7">No placement drives yet.</td></tr>`;
-    return;
-  }
+  if (db.drives.length === 0) { body.innerHTML = `<tr class="empty-row"><td colspan="7">No placement drives yet.</td></tr>`; return; }
+  const canEdit = role === "Admin" || role === "CDC";
   body.innerHTML = db.drives.map(d => {
     const company = companyById(d.companyId);
     const applicants = db.applications.filter(a => a.driveId === d.id).length;
+    let actions = "";
+    if (canEdit) {
+      actions = `<button class="action-btn edit-btn" onclick="editDrive('${d.id}')">Edit</button>
+        <button class="action-btn delete-btn" onclick="deleteDrive('${d.id}')">Delete</button>`;
+    } else if (role === "Student") {
+      const me = myStudentRecord();
+      const already = me && db.applications.some(a => a.studentId === me.id && a.driveId === d.id);
+      actions = already ? `<span class="badge shortlisted">Applied</span>` : `<button class="action-btn edit-btn" onclick="applyToDrive('${d.id}')">Apply</button>`;
+    } else {
+      actions = `<span class="count-pill">${applicants} applicant${applicants === 1 ? "" : "s"}</span>`;
+    }
     return `<tr>
-      <td>${escapeHtml(company ? company.name : "Unknown")}</td>
-      <td>${escapeHtml(d.role)}</td>
-      <td>${d.package} LPA</td>
-      <td>${d.minCgpa}</td>
-      <td>${escapeHtml(d.deadline)}</td>
-      <td>${applicants}</td>
-      <td>
-        <button class="actionBtn editBtn" onclick="editDrive('${d.id}')">Edit</button>
-        <button class="actionBtn deleteBtn" onclick="deleteDrive('${d.id}')">Delete</button>
-      </td>
+      <td>${escapeHtml(company ? company.name : "Unknown")}</td><td>${escapeHtml(d.role)}</td><td>${d.package} LPA</td>
+      <td>${d.minCgpa}</td><td>${escapeHtml(d.deadline)}</td><td>${applicants}</td><td>${actions}</td>
     </tr>`;
   }).join("");
 }
 
 // ================= STUDENTS =================
-const studentForm = document.getElementById("studentForm");
-studentForm.addEventListener("submit", e => {
+async function onStudentSubmit(e) {
   e.preventDefault();
   const id = document.getElementById("studentId").value;
   const payload = {
-    id: id || uid("s"),
+    id,
     name: document.getElementById("studentName").value.trim(),
     email: document.getElementById("studentEmail").value.trim(),
     branch: document.getElementById("studentBranch").value.trim(),
     cgpa: parseFloat(document.getElementById("studentCgpa").value)
   };
-  if (!payload.name || !payload.email || !payload.branch) { showMessage("student", "All fields are required.", "error"); return; }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) { showMessage("student", "Please enter a valid email address.", "error"); return; }
-  if (payload.cgpa < 0 || payload.cgpa > 10) { showMessage("student", "CGPA must be between 0 and 10.", "error"); return; }
-
-  if (id) {
-    const idx = db.students.findIndex(s => s.id === id);
-    db.students[idx] = payload;
-    showMessage("student", "Student updated successfully.", "success");
-  } else {
-    db.students.push(payload);
-    showMessage("student", "Student created successfully.", "success");
-  }
-  persist("students");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)) { formMsg("studentMsg", "Please enter a valid email address.", "error"); return; }
+  const res = await apiRequest("students", id ? "update" : "create", payload);
+  if (!res.success) { formMsg("studentMsg", res.message, "error"); return; }
+  formMsg("studentMsg", res.message, "success");
   resetForm("student");
-  renderAll();
-});
+  await loadData();
+  renderStudents();
+}
 
 function editStudent(id) {
   const s = studentById(id);
@@ -294,26 +489,34 @@ function editStudent(id) {
   document.getElementById("studentFormTitle").innerText = "Update Student";
 }
 
-function deleteStudent(id) {
-  const linkedApps = db.applications.some(a => a.studentId === id);
-  if (linkedApps) {
-    showMessage("student", "Cannot delete: this student has applications linked to them.", "error");
-    return;
-  }
+async function deleteStudent(id) {
   if (!confirm("Delete this student?")) return;
-  db.students = db.students.filter(s => s.id !== id);
-  persist("students");
-  showMessage("student", "Student deleted.", "success");
-  renderAll();
+  const res = await apiRequest("students", "delete", { id });
+  toast(res.message, res.success ? "success" : "error");
+  if (res.success) { await loadData(); renderStudents(); }
 }
 
+function renderStudents() {
+  const body = document.getElementById("studentTableBody");
+  document.getElementById("studentCount").innerText = `${db.students.length} student${db.students.length === 1 ? "" : "s"}`;
+  if (db.students.length === 0) { body.innerHTML = `<tr class="empty-row"><td colspan="6">No students yet.</td></tr>`; return; }
+  body.innerHTML = db.students.map(s => {
+    const apps = db.applications.filter(a => a.studentId === s.id).length;
+    return `<tr>
+      <td>${escapeHtml(s.name)}</td><td>${escapeHtml(s.email)}</td><td>${escapeHtml(s.branch)}</td><td>${s.cgpa}</td><td>${apps}</td>
+      <td><button class="action-btn edit-btn" onclick="editStudent('${s.id}')">Edit</button>
+      <button class="action-btn delete-btn" onclick="deleteStudent('${s.id}')">Delete</button></td>
+    </tr>`;
+  }).join("");
+}
+
+// ================= APPLICATIONS =================
 function renderApplicationStudentOptions() {
   const select = document.getElementById("applicationStudent");
   const current = select.value;
   select.innerHTML = `<option value="">Select Student</option>` + db.students.map(s => `<option value="${s.id}">${escapeHtml(s.name)} (CGPA ${s.cgpa})</option>`).join("");
   select.value = current;
 }
-
 function renderApplicationDriveOptions() {
   const select = document.getElementById("applicationDrive");
   const current = select.value;
@@ -324,74 +527,29 @@ function renderApplicationDriveOptions() {
   select.value = current;
 }
 
-function renderStudents() {
-  const body = document.getElementById("studentTableBody");
-  document.getElementById("studentCount").innerText = `${db.students.length} student${db.students.length === 1 ? "" : "s"}`;
-  if (db.students.length === 0) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="6">No students yet.</td></tr>`;
-    return;
-  }
-  body.innerHTML = db.students.map(s => {
-    const apps = db.applications.filter(a => a.studentId === s.id).length;
-    return `<tr>
-      <td>${escapeHtml(s.name)}</td>
-      <td>${escapeHtml(s.email)}</td>
-      <td>${escapeHtml(s.branch)}</td>
-      <td>${s.cgpa}</td>
-      <td>${apps}</td>
-      <td>
-        <button class="actionBtn editBtn" onclick="editStudent('${s.id}')">Edit</button>
-        <button class="actionBtn deleteBtn" onclick="deleteStudent('${s.id}')">Delete</button>
-      </td>
-    </tr>`;
-  }).join("");
-}
-
-// ================= APPLICATIONS =================
-const applicationForm = document.getElementById("applicationForm");
-applicationForm.addEventListener("submit", e => {
+async function onApplicationSubmit(e) {
   e.preventDefault();
+  const role = session.user.role;
   const id = document.getElementById("applicationId").value;
-  const studentId = document.getElementById("applicationStudent").value;
   const driveId = document.getElementById("applicationDrive").value;
+  let studentId = document.getElementById("applicationStudent").value;
   const status = document.getElementById("applicationStatus").value;
 
-  if (!studentId || !driveId) { showMessage("application", "Student and drive are required.", "error"); return; }
-
-  const student = studentById(studentId);
-  const drive = driveById(driveId);
-
-  if (!id) {
-    if (new Date(drive.deadline) < new Date(new Date().toDateString())) {
-      showMessage("application", "Application deadline has passed.", "error"); return;
-    }
-    if (student.cgpa < drive.minCgpa) {
-      showMessage("application", "Student does not meet the eligibility criteria for this drive.", "error"); return;
-    }
-    const duplicate = db.applications.some(a => a.studentId === studentId && a.driveId === driveId);
-    if (duplicate) {
-      showMessage("application", "This student has already applied to this drive.", "error"); return;
-    }
+  if (role === "Student") {
+    const me = myStudentRecord();
+    if (!me) { formMsg("applicationMsg", "No student profile linked to your account.", "error"); return; }
+    studentId = me.id;
   }
+  if (!studentId || !driveId) { formMsg("applicationMsg", "Student and drive are required.", "error"); return; }
 
-  const payload = {
-    id: id || uid("a"),
-    studentId, driveId, status,
-    appliedAt: id ? db.applications.find(a => a.id === id).appliedAt : new Date().toLocaleString()
-  };
-
-  if (id) {
-    const idx = db.applications.findIndex(a => a.id === id);
-    db.applications[idx] = payload;
-    showMessage("application", "Application updated successfully.", "success");
-  } else {
-    db.applications.push(payload);
-    showMessage("application", "Application submitted successfully.", "success");
-  }
-  persist("applications");
+  const payload = { id, studentId, driveId, status: role === "Student" ? "Applied" : status };
+  const res = await apiRequest("applications", id ? "update" : "create", payload);
+  if (!res.success) { formMsg("applicationMsg", res.message, "error"); return; }
+  formMsg("applicationMsg", res.message, "success");
   resetForm("application");
-  renderAll();
-});
+  await loadData();
+  renderApplications();
+}
 
 function editApplication(id) {
   const a = db.applications.find(x => x.id === id);
@@ -403,12 +561,19 @@ function editApplication(id) {
   document.getElementById("applicationFormTitle").innerText = "Update Application";
 }
 
-function deleteApplication(id) {
+async function deleteApplication(id) {
   if (!confirm("Delete this application?")) return;
-  db.applications = db.applications.filter(a => a.id !== id);
-  persist("applications");
-  showMessage("application", "Application deleted.", "success");
-  renderAll();
+  const res = await apiRequest("applications", "delete", { id });
+  toast(res.message, res.success ? "success" : "error");
+  if (res.success) { await loadData(); renderApplications(); }
+}
+
+async function updateApplicationStatus(id, status) {
+  const a = db.applications.find(x => x.id === id);
+  if (!a) return;
+  const res = await apiRequest("applications", "update", { id, studentId: a.studentId, driveId: a.driveId, status });
+  toast(res.message, res.success ? "success" : "error");
+  if (res.success) { await loadData(); renderApplications(); }
 }
 
 function statusBadgeClass(status) {
@@ -416,52 +581,150 @@ function statusBadgeClass(status) {
 }
 
 function renderApplications() {
+  renderApplicationStudentOptions();
+  renderApplicationDriveOptions();
+  const role = session.user.role;
   const body = document.getElementById("applicationTableBody");
   document.getElementById("applicationCount").innerText = `${db.applications.length} application${db.applications.length === 1 ? "" : "s"}`;
-  if (db.applications.length === 0) {
-    body.innerHTML = `<tr class="empty-row"><td colspan="6">No applications yet.</td></tr>`;
-    return;
-  }
+  if (db.applications.length === 0) { body.innerHTML = `<tr class="empty-row"><td colspan="6">No applications yet.</td></tr>`; return; }
   body.innerHTML = db.applications.slice().reverse().map(a => {
     const student = studentById(a.studentId);
     const drive = driveById(a.driveId);
     const company = drive ? companyById(drive.companyId) : null;
+    let actions = "";
+    if (role === "Admin" || role === "CDC") {
+      actions = `<button class="action-btn edit-btn" onclick="editApplication('${a.id}')">Edit</button>
+        <button class="action-btn delete-btn" onclick="deleteApplication('${a.id}')">Delete</button>`;
+    } else if (role === "Company") {
+      actions = `<select onchange="updateApplicationStatus('${a.id}', this.value)">
+        ${["Applied", "Shortlisted", "Selected", "Rejected"].map(s => `<option value="${s}" ${s === a.status ? "selected" : ""}>${s}</option>`).join("")}
+      </select>`;
+    }
     return `<tr>
-      <td>${escapeHtml(student ? student.name : "Unknown")}</td>
-      <td>${escapeHtml(drive ? drive.role : "Unknown")}</td>
+      <td>${escapeHtml(student ? student.name : "Unknown")}</td><td>${escapeHtml(drive ? drive.role : "Unknown")}</td>
       <td>${escapeHtml(company ? company.name : "Unknown")}</td>
       <td><span class="badge ${statusBadgeClass(a.status)}">${escapeHtml(a.status)}</span></td>
-      <td>${escapeHtml(a.appliedAt)}</td>
-      <td>
-        <button class="actionBtn editBtn" onclick="editApplication('${a.id}')">Edit</button>
-        <button class="actionBtn deleteBtn" onclick="deleteApplication('${a.id}')">Delete</button>
-      </td>
+      <td>${escapeHtml(a.appliedAt)}</td><td>${actions}</td>
     </tr>`;
   }).join("");
 }
 
+// ================= PROFILE (Student) =================
+function renderProfile() {
+  const me = myStudentRecord();
+  if (!me) { formMsg("profileMsg", "No student profile linked to your account yet. Contact the CDC.", "error"); return; }
+  document.getElementById("profileName").value = me.name;
+  document.getElementById("profileEmail").value = me.email;
+  document.getElementById("profileBranch").value = me.branch;
+  document.getElementById("profileCgpa").value = me.cgpa;
+  document.getElementById("profileForm").dataset.id = me.id;
+}
+
+async function onProfileSubmit(e) {
+  e.preventDefault();
+  const id = document.getElementById("profileForm").dataset.id;
+  const payload = {
+    id,
+    name: document.getElementById("profileName").value.trim(),
+    email: document.getElementById("profileEmail").value.trim(),
+    branch: document.getElementById("profileBranch").value.trim(),
+    cgpa: parseFloat(document.getElementById("profileCgpa").value)
+  };
+  const res = await apiRequest("students", "update", payload);
+  formMsg("profileMsg", res.message, res.success ? "success" : "error");
+  if (res.success) await loadData();
+}
+
+// ================= USERS (Admin) =================
+function renderUserCompanyOptions() {
+  const select = document.getElementById("userFormCompany");
+  const current = select.value;
+  select.innerHTML = `<option value="">—</option>` + db.companies.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
+  select.value = current;
+}
+
+async function onUserSubmit(e) {
+  e.preventDefault();
+  const id = document.getElementById("userId").value;
+  const payload = {
+    id,
+    name: document.getElementById("userFormName").value.trim(),
+    email: document.getElementById("userFormEmail").value.trim(),
+    role: document.getElementById("userFormRole").value,
+    companyId: document.getElementById("userFormCompany").value,
+    status: document.getElementById("userFormStatus").value
+  };
+  const password = document.getElementById("userFormPassword").value;
+  if (password) payload.password = password;
+  const res = await apiRequest("users", id ? "update" : "create", payload);
+  if (!res.success) { formMsg("userFormMsg", res.message, "error"); return; }
+  formMsg("userFormMsg", res.message, "success");
+  resetForm("userForm");
+  await loadData();
+  renderUsers();
+}
+
+function editUser(id) {
+  const u = db.users.find(x => x.id === id);
+  if (!u) return;
+  document.getElementById("userId").value = u.id;
+  document.getElementById("userFormName").value = u.name;
+  document.getElementById("userFormEmail").value = u.email;
+  document.getElementById("userFormRole").value = u.role;
+  document.getElementById("userFormCompany").value = u.companyId || "";
+  document.getElementById("userFormStatus").value = u.status;
+  document.getElementById("userFormTitle").innerText = "Update User";
+}
+
+async function deleteUser(id) {
+  if (!confirm("Delete this user account?")) return;
+  const res = await apiRequest("users", "delete", { id });
+  toast(res.message, res.success ? "success" : "error");
+  if (res.success) { await loadData(); renderUsers(); }
+}
+
+function renderUsers() {
+  renderUserCompanyOptions();
+  const body = document.getElementById("userTableBody");
+  document.getElementById("userCount").innerText = `${db.users.length} user${db.users.length === 1 ? "" : "s"}`;
+  if (db.users.length === 0) { body.innerHTML = `<tr class="empty-row"><td colspan="5">No users yet.</td></tr>`; return; }
+  body.innerHTML = db.users.map(u => `<tr>
+    <td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.role)}</td>
+    <td><span class="badge ${u.status === "active" ? "selected" : "rejected"}">${escapeHtml(u.status)}</span></td>
+    <td><button class="action-btn edit-btn" onclick="editUser('${u.id}')">Edit</button>
+    <button class="action-btn delete-btn" onclick="deleteUser('${u.id}')">Delete</button></td>
+  </tr>`).join("");
+}
+
 // ================= DASHBOARD =================
 function renderDashboard() {
+  const role = session.user.role;
   const grid = document.getElementById("statGrid");
-  grid.innerHTML = `
-    <div class="stat"><div class="label">Companies</div><div class="value">${db.companies.length}</div></div>
-    <div class="stat"><div class="label">Active Drives</div><div class="value">${db.drives.length}</div></div>
-    <div class="stat"><div class="label">Students</div><div class="value">${db.students.length}</div></div>
-    <div class="stat accent"><div class="label">Applications</div><div class="value">${db.applications.length}</div></div>
-  `;
 
-  const statuses = ["Applied", "Shortlisted", "Selected", "Rejected"];
-  const colors = { Applied: "#f0c419", Shortlisted: "#8b5cf6", Selected: "#2f9e44", Rejected: "#e03131" };
-  const max = Math.max(1, ...statuses.map(s => db.applications.filter(a => a.status === s).length));
-  document.getElementById("statusBars").innerHTML = statuses.map(s => {
-    const count = db.applications.filter(a => a.status === s).length;
-    const pct = Math.round((count / max) * 100);
-    return `<div class="statusRow">
-      <div class="name">${s}</div>
-      <div class="barTrack"><div class="barFill" style="width:${pct}%;background:${colors[s]}"></div></div>
-      <div class="num">${count}</div>
-    </div>`;
-  }).join("");
+  if (role === "Admin" || role === "CDC") {
+    grid.innerHTML = `
+      <div class="stat"><div class="label">Companies</div><div class="value">${db.companies.length}</div></div>
+      <div class="stat"><div class="label">Active Drives</div><div class="value">${db.drives.length}</div></div>
+      <div class="stat"><div class="label">Students</div><div class="value">${db.students.length}</div></div>
+      <div class="stat accent"><div class="label">Applications</div><div class="value">${db.applications.length}</div></div>`;
+  } else if (role === "Company") {
+    const myDrives = db.drives.filter(d => d.companyId === session.user.companyId);
+    const myApps = db.applications;
+    grid.innerHTML = `
+      <div class="stat"><div class="label">Our drives</div><div class="value">${myDrives.length}</div></div>
+      <div class="stat"><div class="label">Applicants</div><div class="value">${myApps.length}</div></div>
+      <div class="stat"><div class="label">Shortlisted</div><div class="value">${myApps.filter(a => a.status === "Shortlisted").length}</div></div>
+      <div class="stat accent"><div class="label">Selected</div><div class="value">${myApps.filter(a => a.status === "Selected").length}</div></div>`;
+  } else {
+    const myApps = db.applications;
+    grid.innerHTML = `
+      <div class="stat"><div class="label">Open drives</div><div class="value">${db.drives.length}</div></div>
+      <div class="stat"><div class="label">My applications</div><div class="value">${myApps.length}</div></div>
+      <div class="stat"><div class="label">Shortlisted</div><div class="value">${myApps.filter(a => a.status === "Shortlisted").length}</div></div>
+      <div class="stat accent"><div class="label">Selected</div><div class="value">${myApps.filter(a => a.status === "Selected").length}</div></div>`;
+  }
+
+  renderCharts();
 
   const recentBody = document.getElementById("recentAppsBody");
   const recent = db.applications.slice(-5).reverse();
@@ -473,8 +736,7 @@ function renderDashboard() {
       const drive = driveById(a.driveId);
       const company = drive ? companyById(drive.companyId) : null;
       return `<tr>
-        <td>${escapeHtml(student ? student.name : "Unknown")}</td>
-        <td>${escapeHtml(drive ? drive.role : "Unknown")}</td>
+        <td>${escapeHtml(student ? student.name : "Unknown")}</td><td>${escapeHtml(drive ? drive.role : "Unknown")}</td>
         <td>${escapeHtml(company ? company.name : "Unknown")}</td>
         <td><span class="badge ${statusBadgeClass(a.status)}">${escapeHtml(a.status)}</span></td>
         <td>${escapeHtml(a.appliedAt)}</td>
@@ -483,23 +745,29 @@ function renderDashboard() {
   }
 }
 
-// ================= Shared ================
-function resetForm(entity) {
-  document.getElementById(entity + "Form").reset();
-  document.getElementById(entity + "Id").value = "";
-  const titleMap = { company: "Add Company", drive: "Add Drive", student: "Add Student", application: "New Application" };
-  document.getElementById(entity + "FormTitle").innerText = titleMap[entity];
-}
+function renderCharts() {
+  const statuses = ["Applied", "Shortlisted", "Selected", "Rejected"];
+  const statusColors = ["#d79a1f", "#5b6cf0", "#2f9e6e", "#e2566b"];
+  const statusCounts = statuses.map(s => db.applications.filter(a => a.status === s).length);
 
-function renderAll() {
-  renderDriveCompanyOptions();
-  renderApplicationStudentOptions();
-  renderApplicationDriveOptions();
-  renderCompanies();
-  renderDrives();
-  renderStudents();
-  renderApplications();
-  renderDashboard();
-}
+  const ctx1 = document.getElementById("chartStatus");
+  if (charts.status) charts.status.destroy();
+  charts.status = new Chart(ctx1, {
+    type: "doughnut",
+    data: { labels: statuses, datasets: [{ data: statusCounts, backgroundColor: statusColors, borderWidth: 0 }] },
+    options: { plugins: { legend: { position: "bottom", labels: { boxWidth: 10, font: { size: 11 } } } }, cutout: "62%" }
+  });
 
-renderAll();
+  const companyNames = db.companies.map(c => c.name);
+  const driveCounts = db.companies.map(c => db.drives.filter(d => d.companyId === c.id).length);
+  const ctx2 = document.getElementById("chartDrives");
+  if (charts.drives) charts.drives.destroy();
+  charts.drives = new Chart(ctx2, {
+    type: "bar",
+    data: { labels: companyNames, datasets: [{ data: driveCounts, backgroundColor: "#8d9bff", borderRadius: 6, maxBarThickness: 34 }] },
+    options: {
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } }
+    }
+  });
+}
