@@ -1,185 +1,334 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CPDMS — Campus Placement Drive Management System</title>
-  <meta name="description" content="Enterprise-style CRUD system for companies, placement drives, students and applications. Built during the SPSU Udaipur Championship.">
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CPDMS · Campus Placement Drive Management System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <p class="eyebrow">SPSU UDAIPUR CHAMPIONSHIP</p>
-        <h1>CPDMS</h1>
-        <p class="brandSub">Campus Placement Drive<br>Management System</p>
+
+<!-- ======================= AUTH / LANDING SCREEN ======================= -->
+<div id="authScreen" class="auth-screen">
+  <div class="parallax-layer layer-1"></div>
+  <div class="parallax-layer layer-2"></div>
+  <div class="parallax-layer layer-3"></div>
+
+  <header class="auth-nav">
+    <div class="brand">
+      <span class="brand-mark">CP</span>
+      <span class="brand-name">CPDMS <small>SPSU Udaipur</small></span>
+    </div>
+    <div class="auth-nav-note">Campus Placement Drive Management System</div>
+  </header>
+
+  <main class="auth-hero">
+    <section class="hero-copy">
+      <span class="eyebrow">Enterprise placement infrastructure</span>
+      <h1>One trusted system for every placement drive on campus.</h1>
+      <p>Students track applications, companies manage drives, the CDC runs the season, and admins see it all — on one securely authenticated platform backed by real, auditable data.</p>
+      <div class="hero-badges">
+        <div class="hero-badge"><strong>Hashed</strong><span>Salted SHA-256 passwords</span></div>
+        <div class="hero-badge"><strong>Sessioned</strong><span>Token-based auth, auto-expiry</span></div>
+        <div class="hero-badge"><strong>Role-aware</strong><span>Student · Company · CDC · Admin</span></div>
       </div>
-      <nav id="nav">
-        <button class="navBtn active" data-view="dashboard">Dashboard</button>
-        <button class="navBtn" data-view="companies">Companies</button>
-        <button class="navBtn" data-view="drives">Placement Drives</button>
-        <button class="navBtn" data-view="students">Students</button>
-        <button class="navBtn" data-view="applications">Applications</button>
-      </nav>
-      <div class="sidebarFoot">Built by Lakshya Chopra<br>Data persists locally (localStorage)</div>
-    </aside>
+    </section>
 
-    <main class="main">
-      <!-- DASHBOARD -->
-      <section id="view-dashboard" class="view active">
-        <header class="viewHeader">
-          <div>
-            <h2>Dashboard</h2>
-            <p class="viewSub">Live placement summary across the system</p>
+    <section class="auth-card-wrap">
+      <div class="auth-card" id="loginCard">
+        <div class="auth-card-head">
+          <h2>Sign in</h2>
+          <p>Use your registered CPDMS account.</p>
+        </div>
+        <form id="loginForm" class="auth-form">
+          <label>Email<input type="email" id="loginEmail" placeholder="you@spsu.ac.in" required></label>
+          <label>Password<input type="password" id="loginPassword" placeholder="••••••••" required></label>
+          <div class="auth-form-foot">
+            <a href="#" id="forgotLink">Forgot password?</a>
           </div>
-        </header>
-        <div class="statGrid" id="statGrid"></div>
-        <div class="card">
-          <h3>Applications by Status</h3>
-          <div id="statusBars" class="statusBars"></div>
+          <button type="submit" class="btn-primary" id="loginSubmit">Sign in</button>
+          <div class="auth-msg" id="loginMsg"></div>
+        </form>
+        <div class="demo-accounts">
+          <p>Demo accounts (seeded):</p>
+          <ul>
+            <li><b>Admin</b> — admin@cpdms.com / Admin@123</li>
+            <li><b>CDC</b> — cdc@cpdms.com / Cdc@1234</li>
+            <li><b>Company</b> — tcs@cpdms.com / Tcs@1234</li>
+            <li><b>Student</b> — aarav.mehta@spsu.ac.in / Aarav@123</li>
+          </ul>
         </div>
-        <div class="card">
-          <h3>Recent Applications</h3>
-          <div class="tableWrapper"><table>
-            <thead><tr><th>Student</th><th>Drive</th><th>Company</th><th>Status</th><th>Applied</th></tr></thead>
+      </div>
+
+      <div class="auth-card hidden" id="forgotCard">
+        <div class="auth-card-head">
+          <h2>Reset your password</h2>
+          <p>We'll email a 6-digit code to your account.</p>
+        </div>
+        <form id="forgotForm" class="auth-form">
+          <label>Email<input type="email" id="forgotEmail" placeholder="you@spsu.ac.in" required></label>
+          <button type="submit" class="btn-primary">Send reset code</button>
+          <div class="auth-msg" id="forgotMsg"></div>
+        </form>
+        <form id="resetForm" class="auth-form hidden">
+          <label>Reset code<input type="text" id="resetCode" placeholder="6-digit code" maxlength="6" required></label>
+          <label>New password<input type="password" id="resetPassword" placeholder="New password" required></label>
+          <button type="submit" class="btn-primary">Update password</button>
+          <div class="auth-msg" id="resetMsg"></div>
+        </form>
+        <button type="button" class="btn-link" id="backToLogin">&larr; Back to sign in</button>
+      </div>
+    </section>
+  </main>
+
+  <section class="auth-strip">
+    <div class="strip-item"><span class="num">4</span><span>role-based dashboards</span></div>
+    <div class="strip-item"><span class="num">100%</span><span>Sheets-backed data</span></div>
+    <div class="strip-item"><span class="num">0</span><span>plaintext passwords</span></div>
+  </section>
+</div>
+
+<!-- ======================= APP SHELL (post-login) ======================= -->
+<div id="appShell" class="app-shell hidden">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">CP</span>
+      <span class="brand-name">CPDMS</span>
+    </div>
+    <nav class="side-nav" id="sideNav"></nav>
+    <div class="sidebar-foot">
+      <div class="user-chip">
+        <div class="user-avatar" id="userAvatar">?</div>
+        <div>
+          <div class="user-name" id="userName">—</div>
+          <div class="user-role" id="userRole">—</div>
+        </div>
+      </div>
+      <button class="btn-ghost" id="logoutBtn">Log out</button>
+    </div>
+  </aside>
+
+  <main class="main-area">
+    <header class="topbar">
+      <h1 id="viewTitle">Dashboard</h1>
+      <div class="topbar-right">
+        <span class="session-pill" id="sessionPill">Connected to Sheets backend</span>
+      </div>
+    </header>
+
+    <div class="toast" id="toast"></div>
+
+    <!-- ---- DASHBOARD (all roles) ---- -->
+    <section class="view active" id="view-dashboard">
+      <div class="stat-grid" id="statGrid"></div>
+      <div class="panel-grid">
+        <div class="panel">
+          <h3>Applications by status</h3>
+          <canvas id="chartStatus" height="220"></canvas>
+        </div>
+        <div class="panel">
+          <h3>Drives by company</h3>
+          <canvas id="chartDrives" height="220"></canvas>
+        </div>
+      </div>
+      <div class="panel">
+        <h3>Recent activity</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Student</th><th>Role</th><th>Company</th><th>Status</th><th>Applied</th></tr></thead>
             <tbody id="recentAppsBody"></tbody>
-          </table></div>
+          </table>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- COMPANIES -->
-      <section id="view-companies" class="view">
-        <header class="viewHeader">
-          <div><h2>Companies</h2><p class="viewSub">Organizations participating in placement drives</p></div>
-        </header>
-        <div class="card">
-          <h3 id="companyFormTitle">Add Company</h3>
-          <form id="companyForm">
-            <input type="hidden" id="companyId">
-            <div class="grid3">
-              <div><label>Company Name</label><input type="text" id="companyName" placeholder="e.g. TCS" required></div>
-              <div><label>Industry</label><input type="text" id="companyIndustry" placeholder="e.g. IT Services" required></div>
-              <div><label>Website</label><input type="text" id="companyWebsite" placeholder="e.g. tcs.com"></div>
-            </div>
-            <div class="actions">
-              <button type="submit">Save Company</button>
-              <button type="button" class="secondary" onclick="resetForm('company')">Cancel</button>
-            </div>
-          </form>
-          <p class="msg" id="companyMsg"></p>
-        </div>
-        <div class="card">
-          <div class="tableHeader"><h3>All Companies</h3><span class="count" id="companyCount"></span></div>
-          <div class="tableWrapper"><table>
-            <thead><tr><th>Name</th><th>Industry</th><th>Website</th><th>Open Drives</th><th>Actions</th></tr></thead>
+    <!-- ---- COMPANIES (Admin, CDC) ---- -->
+    <section class="view" id="view-companies">
+      <div class="panel form-panel">
+        <h3 id="companyFormTitle">Add Company</h3>
+        <form id="companyForm" class="grid-form">
+          <input type="hidden" id="companyId">
+          <label>Name<input id="companyName" required></label>
+          <label>Industry<input id="companyIndustry" required></label>
+          <label>Website<input id="companyWebsite"></label>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save company</button>
+            <button type="button" class="btn-ghost" onclick="resetForm('company')">Clear</button>
+          </div>
+          <div class="auth-msg" id="companyMsg"></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Companies</h3><span class="count-pill" id="companyCount"></span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Industry</th><th>Website</th><th>Open drives</th><th></th></tr></thead>
             <tbody id="companyTableBody"></tbody>
-          </table></div>
+          </table>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- DRIVES -->
-      <section id="view-drives" class="view">
-        <header class="viewHeader">
-          <div><h2>Placement Drives</h2><p class="viewSub">Roles, packages, deadlines and eligibility</p></div>
-        </header>
-        <div class="card">
-          <h3 id="driveFormTitle">Add Drive</h3>
-          <form id="driveForm">
-            <input type="hidden" id="driveId">
-            <div class="grid3">
-              <div><label>Company</label><select id="driveCompany" required></select></div>
-              <div><label>Role</label><input type="text" id="driveRole" placeholder="e.g. SDE I" required></div>
-              <div><label>Package (LPA)</label><input type="number" step="0.1" id="drivePackage" placeholder="e.g. 7.5" required></div>
-              <div><label>Minimum CGPA</label><input type="number" step="0.1" min="0" max="10" id="driveMinCgpa" placeholder="e.g. 6.0" required></div>
-              <div><label>Deadline</label><input type="date" id="driveDeadline" required></div>
-            </div>
-            <div class="actions">
-              <button type="submit">Save Drive</button>
-              <button type="button" class="secondary" onclick="resetForm('drive')">Cancel</button>
-            </div>
-          </form>
-          <p class="msg" id="driveMsg"></p>
-        </div>
-        <div class="card">
-          <div class="tableHeader"><h3>All Drives</h3><span class="count" id="driveCount"></span></div>
-          <div class="tableWrapper"><table>
-            <thead><tr><th>Company</th><th>Role</th><th>Package</th><th>Min CGPA</th><th>Deadline</th><th>Applicants</th><th>Actions</th></tr></thead>
+    <!-- ---- DRIVES (Admin, CDC view/edit; Company own; Student browse/apply) ---- -->
+    <section class="view" id="view-drives">
+      <div class="panel form-panel" id="driveFormPanel">
+        <h3 id="driveFormTitle">Add Drive</h3>
+        <form id="driveForm" class="grid-form">
+          <input type="hidden" id="driveId">
+          <label>Company
+            <select id="driveCompany" required></select>
+          </label>
+          <label>Role<input id="driveRole" required></label>
+          <label>Package (LPA)<input id="drivePackage" type="number" step="0.1" required></label>
+          <label>Min CGPA<input id="driveMinCgpa" type="number" step="0.1" required></label>
+          <label>Deadline<input id="driveDeadline" type="date" required></label>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save drive</button>
+            <button type="button" class="btn-ghost" onclick="resetForm('drive')">Clear</button>
+          </div>
+          <div class="auth-msg" id="driveMsg"></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Placement drives</h3><span class="count-pill" id="driveCount"></span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Company</th><th>Role</th><th>Package</th><th>Min CGPA</th><th>Deadline</th><th>Applicants</th><th></th></tr></thead>
             <tbody id="driveTableBody"></tbody>
-          </table></div>
+          </table>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- STUDENTS -->
-      <section id="view-students" class="view">
-        <header class="viewHeader">
-          <div><h2>Students</h2><p class="viewSub">Candidate records and academic profile</p></div>
-        </header>
-        <div class="card">
-          <h3 id="studentFormTitle">Add Student</h3>
-          <form id="studentForm">
-            <input type="hidden" id="studentId">
-            <div class="grid3">
-              <div><label>Name</label><input type="text" id="studentName" placeholder="e.g. Aarav Mehta" required></div>
-              <div><label>Email</label><input type="email" id="studentEmail" placeholder="e.g. aarav@spsu.ac.in" required></div>
-              <div><label>Branch</label><input type="text" id="studentBranch" placeholder="e.g. CSE" required></div>
-              <div><label>CGPA</label><input type="number" step="0.1" min="0" max="10" id="studentCgpa" placeholder="e.g. 8.2" required></div>
-            </div>
-            <div class="actions">
-              <button type="submit">Save Student</button>
-              <button type="button" class="secondary" onclick="resetForm('student')">Cancel</button>
-            </div>
-          </form>
-          <p class="msg" id="studentMsg"></p>
-        </div>
-        <div class="card">
-          <div class="tableHeader"><h3>All Students</h3><span class="count" id="studentCount"></span></div>
-          <div class="tableWrapper"><table>
-            <thead><tr><th>Name</th><th>Email</th><th>Branch</th><th>CGPA</th><th>Applications</th><th>Actions</th></tr></thead>
+    <!-- ---- STUDENTS (Admin, CDC) ---- -->
+    <section class="view" id="view-students">
+      <div class="panel form-panel">
+        <h3 id="studentFormTitle">Add Student</h3>
+        <form id="studentForm" class="grid-form">
+          <input type="hidden" id="studentId">
+          <label>Name<input id="studentName" required></label>
+          <label>Email<input id="studentEmail" type="email" required></label>
+          <label>Branch<input id="studentBranch" required></label>
+          <label>CGPA<input id="studentCgpa" type="number" step="0.1" min="0" max="10" required></label>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save student</button>
+            <button type="button" class="btn-ghost" onclick="resetForm('student')">Clear</button>
+          </div>
+          <div class="auth-msg" id="studentMsg"></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Students</h3><span class="count-pill" id="studentCount"></span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Branch</th><th>CGPA</th><th>Applications</th><th></th></tr></thead>
             <tbody id="studentTableBody"></tbody>
-          </table></div>
+          </table>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- APPLICATIONS -->
-      <section id="view-applications" class="view">
-        <header class="viewHeader">
-          <div><h2>Applications</h2><p class="viewSub">Student applications and selection status</p></div>
-        </header>
-        <div class="card">
-          <h3 id="applicationFormTitle">New Application</h3>
-          <form id="applicationForm">
-            <input type="hidden" id="applicationId">
-            <div class="grid3">
-              <div><label>Student</label><select id="applicationStudent" required></select></div>
-              <div><label>Drive</label><select id="applicationDrive" required></select></div>
-              <div><label>Status</label>
-                <select id="applicationStatus" required>
-                  <option value="Applied">Applied</option>
-                  <option value="Shortlisted">Shortlisted</option>
-                  <option value="Selected">Selected</option>
-                  <option value="Rejected">Rejected</option>
-                </select>
-              </div>
-            </div>
-            <div class="actions">
-              <button type="submit">Save Application</button>
-              <button type="button" class="secondary" onclick="resetForm('application')">Cancel</button>
-            </div>
-          </form>
-          <p class="msg" id="applicationMsg"></p>
-        </div>
-        <div class="card">
-          <div class="tableHeader"><h3>All Applications</h3><span class="count" id="applicationCount"></span></div>
-          <div class="tableWrapper"><table>
-            <thead><tr><th>Student</th><th>Drive</th><th>Company</th><th>Status</th><th>Applied</th><th>Actions</th></tr></thead>
+    <!-- ---- APPLICATIONS (Admin, CDC, Company[own], Student[own]) ---- -->
+    <section class="view" id="view-applications">
+      <div class="panel form-panel" id="applicationFormPanel">
+        <h3 id="applicationFormTitle">New Application</h3>
+        <form id="applicationForm" class="grid-form">
+          <input type="hidden" id="applicationId">
+          <label id="applicationStudentWrap">Student
+            <select id="applicationStudent" required></select>
+          </label>
+          <label>Drive
+            <select id="applicationDrive" required></select>
+          </label>
+          <label id="applicationStatusWrap">Status
+            <select id="applicationStatus">
+              <option>Applied</option>
+              <option>Shortlisted</option>
+              <option>Selected</option>
+              <option>Rejected</option>
+            </select>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save application</button>
+            <button type="button" class="btn-ghost" onclick="resetForm('application')">Clear</button>
+          </div>
+          <div class="auth-msg" id="applicationMsg"></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>Applications</h3><span class="count-pill" id="applicationCount"></span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Student</th><th>Role</th><th>Company</th><th>Status</th><th>Applied</th><th></th></tr></thead>
             <tbody id="applicationTableBody"></tbody>
-          </table></div>
+          </table>
         </div>
-      </section>
-    </main>
-  </div>
+      </div>
+    </section>
 
-  <script src="script.js"></script>
+    <!-- ---- MY PROFILE (Student) ---- -->
+    <section class="view" id="view-profile">
+      <div class="panel form-panel" style="max-width:520px">
+        <h3>My profile</h3>
+        <form id="profileForm" class="grid-form">
+          <label>Name<input id="profileName" required></label>
+          <label>Email<input id="profileEmail" type="email" required readonly></label>
+          <label>Branch<input id="profileBranch" required></label>
+          <label>CGPA<input id="profileCgpa" type="number" step="0.1" min="0" max="10" required></label>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save profile</button>
+          </div>
+          <div class="auth-msg" id="profileMsg"></div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ---- USERS (Admin only) ---- -->
+    <section class="view" id="view-users">
+      <div class="panel form-panel">
+        <h3 id="userFormTitle">Add User</h3>
+        <form id="userForm" class="grid-form">
+          <input type="hidden" id="userId">
+          <label>Name<input id="userFormName" required></label>
+          <label>Email<input id="userFormEmail" type="email" required></label>
+          <label>Temp password<input id="userFormPassword" placeholder="Set initial password"></label>
+          <label>Role
+            <select id="userFormRole">
+              <option>Student</option>
+              <option>Company</option>
+              <option>CDC</option>
+              <option>Admin</option>
+            </select>
+          </label>
+          <label>Company (if role = Company)
+            <select id="userFormCompany"></select>
+          </label>
+          <label>Status
+            <select id="userFormStatus"><option>active</option><option>disabled</option></select>
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="btn-primary">Save user</button>
+            <button type="button" class="btn-ghost" onclick="resetForm('userForm')">Clear</button>
+          </div>
+          <div class="auth-msg" id="userFormMsg"></div>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3>User accounts</h3><span class="count-pill" id="userCount"></span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead>
+            <tbody id="userTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="script.js"></script>
 </body>
 </html>
